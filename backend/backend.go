@@ -9,10 +9,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/hashicorp/terraform/command/clistate"
+	"github.com/hashicorp/terraform/config/configschema"
 	"github.com/hashicorp/terraform/config/module"
 	"github.com/hashicorp/terraform/state"
 	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform/tfdiags"
 )
 
 // This is the name of the default, initial state that every backend
@@ -26,11 +30,45 @@ var ErrNamedStatesNotSupported = errors.New("named states not supported")
 
 // Backend is the minimal interface that must be implemented to enable Terraform.
 type Backend interface {
-	// Ask for input and configure the backend. Similar to
-	// terraform.ResourceProvider.
-	Input(terraform.UIInput, *terraform.ResourceConfig) (*terraform.ResourceConfig, error)
-	Validate(*terraform.ResourceConfig) ([]string, []error)
-	Configure(*terraform.ResourceConfig) error
+	// ConfigSchema returns a description of the expected configuration
+	// structure for the receiving backend.
+	//
+	// This method does not have any side-effects for the backend and can
+	// be safely used before configuring.
+	ConfigSchema() *configschema.Block
+
+	// ValidateConfig checks the validity of the values in the given
+	// configuration, assuming that its structure has already been validated
+	// per the schema returned by ConfigSchema.
+	//
+	// This method does not have any side-effects for the backend and can
+	// be safely used before configuring. It also does not consult any
+	// external data such as environment variables, disk files, etc. Validation
+	// that requires such external data should be deferred until the
+	// Configure call.
+	//
+	// If error diagnostics are returned then the configuration is not valid
+	// and must not subsequently be passed to the Configure method.
+	//
+	// This method may return configuration-contextual diagnostics such
+	// as tfdiags.AttributeValue, and so the caller should provide the
+	// necessary context via the diags.InConfigBody method before returning
+	// diagnostics to the user.
+	ValidateConfig(cty.Value) tfdiags.Diagnostics
+
+	// Configure uses the provided configuration to set configuration fields
+	// within the backend.
+	//
+	// The given configuration is assumed to have already been validated
+	// against the schema returned by ConfigSchema and passed validation
+	// via ValidateConfig.
+	//
+	// This method may be called only once per backend instance, and must be
+	// called before all other methods except where otherwise stated.
+	//
+	// If error diagnostics are returned, the internal state of the instance
+	// is undefined and no other methods may be called.
+	Configure(cty.Value) tfdiags.Diagnostics
 
 	// State returns the current state for this environment. This state may
 	// not be loaded locally: the proper APIs should be called on state.State
